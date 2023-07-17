@@ -3,45 +3,37 @@ import time
 import g4f
 from g4f import ChatCompletion
 from googletrans import Translator
-from flask import request
+from flask import request, Response, stream_with_context
 from datetime import datetime
 from requests import get
-from server.auto_proxy import get_random_proxy, update_working_proxies
 from server.config import special_instructions
 
 
 class Backend_Api:
-    def __init__(self, app, config: dict) -> None:
-        """  
-        Initialize the Backend_Api class.  
-
-        :param app: Flask application instance  
-        :param config: Configuration dictionary  
+    def __init__(self, bp, config: dict) -> None:
         """
-        self.app = app
-        self.use_auto_proxy = config['use_auto_proxy']
+        Initialize the Backend_Api class.
+        :param app: Flask application instance
+        :param config: Configuration dictionary
+        """
+        self.bp = bp
         self.routes = {
             '/backend-api/v2/conversation': {
                 'function': self._conversation,
                 'methods': ['POST']
             }
         }
-
-        # if self.use_auto_proxy:
-        #    update_proxies = threading.Thread(
-        #        target=update_working_proxies, daemon=True)
-        #    update_proxies.start()
-
+        
     def _conversation(self):
-        """    
-        Handles the conversation route.    
+        """
+        Handles the conversation route.
 
-        :return: Response object containing the generated conversation stream    
+        :return: Response object containing the generated conversation stream
         """
         max_retries = 3
         retries = 0
         conversation_id = request.json['conversation_id']
-        
+
         while retries < max_retries:
             try:
                 jailbreak = request.json['jailbreak']
@@ -50,13 +42,13 @@ class Backend_Api:
 
                 # Generate response
                 response = ChatCompletion.create(
-                    model=model, 
-                    stream=True, 
+                    model=model,
+                    stream=True,
                     chatId=conversation_id,
                     messages=messages
                 )
 
-                return self.app.response_class(generate_stream(response, jailbreak), mimetype='text/event-stream')
+                return Response(stream_with_context(generate_stream(response, jailbreak)), mimetype='text/event-stream')
 
             except Exception as e:
                 print(e)
@@ -73,11 +65,11 @@ class Backend_Api:
 
 
 def build_messages(jailbreak):
-    """  
-    Build the messages for the conversation.  
+    """
+    Build the messages for the conversation.
 
-    :param jailbreak: Jailbreak instruction string  
-    :return: List of messages for the conversation  
+    :param jailbreak: Jailbreak instruction string
+    :return: List of messages for the conversation
     """
     _conversation = request.json['meta']['content']['conversation']
     internet_access = request.json['meta']['content']['internet_access']
@@ -116,11 +108,11 @@ def build_messages(jailbreak):
 
 
 def fetch_search_results(query):
-    """  
-    Fetch search results for a given query.  
+    """
+    Fetch search results for a given query.
 
-    :param query: Search query string  
-    :return: List of search results  
+    :param query: Search query string
+    :return: List of search results
     """
     search = get('https://ddg-api.herokuapp.com/search',
                  params={
@@ -128,23 +120,20 @@ def fetch_search_results(query):
                      'limit': 3,
                  })
 
-    results = []
     snippets = ""
     for index, result in enumerate(search.json()):
         snippet = f'[{index + 1}] "{result["snippet"]}" URL:{result["link"]}.'
         snippets += snippet
-    results.append({'role': 'system', 'content': snippets})
-
-    return results
+    return [{'role': 'system', 'content': snippets}]
 
 
 def generate_stream(response, jailbreak):
-    """  
-    Generate the conversation stream.  
+    """
+    Generate the conversation stream.
 
-    :param response: Response object from ChatCompletion.create  
-    :param jailbreak: Jailbreak instruction string  
-    :return: Generator object yielding messages in the conversation  
+    :param response: Response object from ChatCompletion.create
+    :param jailbreak: Jailbreak instruction string
+    :return: Generator object yielding messages in the conversation
     """
     if getJailbreak(jailbreak):
         response_jailbreak = ''
@@ -174,28 +163,27 @@ def response_jailbroken_success(response: str) -> bool:
 
 
 def response_jailbroken_failed(response):
-    """  
-    Check if the response has not been jailbroken.  
+    """
+    Check if the response has not been jailbroken.
 
-    :param response: Response string  
-    :return: Boolean indicating if the response has not been jailbroken  
+    :param response: Response string
+    :return: Boolean indicating if the response has not been jailbroken
     """
     return False if len(response) < 4 else not (response.startswith("GPT:") or response.startswith("ACT:"))
 
 
-def set_response_language(prompt):  
+def set_response_language(prompt):
     """  
     Set the response language based on the prompt content.  
-  
+
     :param prompt: Prompt dictionary  
     :return: String indicating the language to be used for the response  
-    """  
-    translator = Translator()  
-    max_chars = 256  
-    content_sample = prompt['content'][:max_chars]  
-    detected_language = translator.detect(content_sample).lang  
-    return f"You will respond in the language: {detected_language}. "  
-
+    """
+    translator = Translator()
+    max_chars = 256
+    content_sample = prompt['content'][:max_chars]
+    detected_language = translator.detect(content_sample).lang
+    return f"You will respond in the language: {detected_language}. "
 
 
 def getJailbreak(jailbreak):
